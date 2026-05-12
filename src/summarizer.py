@@ -3,27 +3,31 @@ Claude API-alapú összefoglalók generálása az áradatokból és hírekből.
 """
 
 import logging
-from anthropic import AsyncAnthropic
+import httpx
 from price_monitor import PriceData
 from news_monitor import NewsItem
 
 log = logging.getLogger(__name__)
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+
 
 class Summarizer:
     def __init__(self, api_key: str):
-        self.client = AsyncAnthropic(api_key=api_key)
+        self.api_key = api_key
 
-    async def _ask_claude(self, prompt: str, max_tokens: int = 700) -> str:
+    async def _ask_gemini(self, prompt: str) -> str:
         try:
-            msg = await self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return msg.content[0].text
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(
+                    GEMINI_URL,
+                    params={"key": self.api_key},
+                    json={"contents": [{"parts": [{"text": prompt}]}]}
+                )
+                r.raise_for_status()
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
-            log.error(f"Claude API hiba: {e}")
+            log.error(f"Gemini API hiba: {e}")
             return "⚠️ Az összefoglalót nem sikerült generálni."
 
     def _format_prices(self, changes: dict) -> str:
@@ -39,74 +43,54 @@ class Summarizer:
     def _format_news(self, news: list[NewsItem]) -> str:
         if not news:
             return "Nincs releváns friss hír."
-        lines = []
-        for item in news[:10]:
-            lines.append(f"• [{item.source}] {item.title}")
-        return "\n".join(lines)
+        return "\n".join(f"• [{i.source}] {i.title}" for i in news[:10])
 
     async def create_morning_summary(self, changes: dict,
                                      news: list[NewsItem]) -> str:
-        prices_text = self._format_prices(changes)
-        news_text = self._format_news(news)
-
         prompt = f"""
-Te egy mezőgazdasági piacelemző vagy, aki magyar gazdálkodóknak és kereskedőknek ír.
-Készíts egy tömör, szakszerű REGGELI PIACI ÖSSZEFOGLALÓT az alábbi adatok alapján.
+Te egy mezőgazdasági piacelemző vagy, aki magyar gazdálkodóknak ír.
+Készíts tömör REGGELI PIACI ÖSSZEFOGLALÓT magyarul az alábbi adatok alapján.
 
 MAI ÁRAK:
-{prices_text}
+{self._format_prices(changes)}
 
 FRISS HÍREK:
-{news_text}
+{self._format_news(news)}
 
-Kérlek, az összefoglalót magyarul írd meg, és tartalmazza:
-1. A legfontosabb árváltozások kiemelése (1-2 mondat)
-2. A legjelentősebb hírek rövid értékelése (2-3 mondat)
-3. Rövid piaci kitekintő (mi várható ma?)
-
-Formátum: Telegram üzenet, emoji-kkal tagolva. Max 280 szó. Ne legyenek fejlécek, legyen folyó szöveg bekezdésekkel.
-Kezdd ezzel: 🌅 *Reggeli piaci összefoglaló*
+Tartalmazza: legfontosabb árváltozások (1-2 mondat), hírek értékelése (2-3 mondat), rövid kitekintő.
+Telegram üzenet formátum, emoji-kkal. Max 280 szó.
+Kezdd: 🌅 *Reggeli piaci összefoglaló*
 """
-        return await self._ask_claude(prompt)
+        return await self._ask_gemini(prompt)
 
     async def create_breaking_summary(self, news: list[NewsItem]) -> str:
         news_text = "\n".join(
-            f"• [{item.source}] {item.title}\n  {item.summary[:200]}"
-            for item in news
+            f"• [{i.source}] {i.title}\n  {i.summary[:200]}"
+            for i in news
         )
-
         prompt = f"""
-Te egy mezőgazdasági piacelemző vagy. Az alábbi SÜRGŐS hírek azonnal befolyásolhatják az alapanyagárakat (búza, kukorica, olaj).
+Mezőgazdasági piacelemzőként írj rövid (max 150 szó) magyar RIASZTÁST ezekről a sürgős hírekről.
+Magyarázd el mi történt, melyik alapanyagot érinti, milyen árirányt valószínűsít.
 
-BREAKING HÍREK:
+HÍREK:
 {news_text}
 
-Írj egy rövid (max 150 szó), magyar nyelvű RIASZTÁST, ami elmagyarázza:
-- Mi történt pontosan
-- Melyik alapanyagot (búza/kukorica/olaj/szójabab) érintheti
-- Milyen árirányt valószínűsít ez rövid távon
-
-Kezdd ezzel: 🚨 *SÜRGŐS PIACI RIASZTÁS*
+Kezdd: 🚨 *SÜRGŐS PIACI RIASZTÁS*
 """
-        return await self._ask_claude(prompt, max_tokens=400)
+        return await self._ask_gemini(prompt)
 
     async def create_price_alert_summary(self, alerts: list[PriceData]) -> str:
-        lines = []
-        for p in alerts:
-            direction = "emelkedett" if p.change_pct > 0 else "csökkent"
-            lines.append(
-                f"• {p.emoji} {p.name}: {p.price:.2f} {p.unit} "
-                f"({direction} {abs(p.change_pct):.1f}%-ot)"
-            )
-        prices_text = "\n".join(lines)
-
+        lines = [
+            f"• {p.emoji} {p.name}: {p.price:.2f} {p.unit} "
+            f"({'emelkedett' if p.change_pct > 0 else 'csökkent'} {abs(p.change_pct):.1f}%-ot)"
+            for p in alerts
+        ]
         prompt = f"""
-Az alábbi mezőgazdasági alapanyagoknál extrém árváltozás történt:
+Írj rövid (max 100 szó) magyar ÁRRIASZTÁST ezekről az extrém árváltozásokról.
+Lehetséges okok és következmények, szakszerűen de közérthetően.
 
-{prices_text}
+{chr(10).join(lines)}
 
-Írj egy rövid (max 100 szó) ÁRRIASZTÁST magyarul, ami elmagyarázza a lehetséges okokat és következményeket. Legyen szakszerű de közérthető.
-
-Kezdd ezzel: ⚡ *EXTRÉM ÁRVÁLTOZÁS ÉSZLELVE*
+Kezdd: ⚡ *EXTRÉM ÁRVÁLTOZÁS ÉSZLELVE*
 """
-        return await self._ask_claude(prompt, max_tokens=300)
+        return await self._ask_gemini(prompt)
