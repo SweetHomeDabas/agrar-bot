@@ -1,0 +1,20 @@
+# Render.com deployment konfiguráció
+# Töltsd fel a GitHub repóba, majd a Render dashboardon
+# "New Web Service" → csatlakoztasd a repót → kész!
+
+services:
+  - type: worker          # worker = háttér folyamat, nem HTTP szerver
+    name: agrar-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python src/bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false       # Render dashboardon add meg kézzel!
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SEND_TEST_ON_START
+        value: "0"        # "1"-re állítva induláskor azonnal küld egy tesztet
+    autoDeploy: true
