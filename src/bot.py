@@ -77,14 +77,14 @@ async def main():
     start_health_server()
     telegram_token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    anthropic_key = os.environ["ANTHROPIC_API_KEY"]
+    gemini_key = os.environ["GEMINI_API_KEY"]
 
     app = ApplicationBuilder().token(telegram_token).build()
 
     notifier = Notifier(app.bot, chat_id)
     price_monitor = PriceMonitor()
     news_monitor = NewsMonitor()
-    summarizer = Summarizer(anthropic_key)
+    summarizer = Summarizer(gemini_key)
 
     scheduler = AsyncIOScheduler(timezone="Europe/Budapest")
 
