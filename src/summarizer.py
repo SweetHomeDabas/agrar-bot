@@ -114,8 +114,11 @@ Kezdd: 🌅 *Reggeli piaci összefoglaló – {datetime.now().strftime('%Y. %m. 
         # RÉSZ 2: Vegyipari + stratégiai ajánlás
         part2_prompt = f"""Te egy tapasztalt takarmányipari alapanyag-beszerző tanácsadó vagy.
 
-JELENLEGI VEGYIPARI REFERENCIA ÁRAK (EU import, USD/tonna):
+JELENLEGI VEGYIPARI REFERENCIA ÁRAK ÉS TRENDEK (EU import, USD/tonna):
 {specialty_text}
+
+VÁSÁRLÁSI STRATÉGIA RÉSZLETESEN (ár + ajánlás):
+{buy_text}
 
 AKTUÁLIS NEGYEDÉV: {quarter}
 
