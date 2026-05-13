@@ -97,8 +97,8 @@ class Summarizer:
         quarter = CURRENT_QUARTER
 
         # RÉSZ 1: Tőzsdei árak + hírek összefoglalója
-        part1_prompt = f"""Te egy tapasztalt mezőgazdasági és takarmányipari alapanyag-piaci elemző vagy.
-Magyar termelőknek, takarmánygyártóknak írsz napi összefoglalót.
+        part1_prompt = f"""Fontos: helyes magyar helyesírást használj.
+Te egy tapasztalt mezőgazdasági és takarmányipari alapanyag-piaci elemző vagy.
 
 MAI TŐZSDEI ÁRAK (USD/tonna):
 {traded_text}
@@ -117,7 +117,8 @@ Kezdd: 🌅 *Reggeli piaci összefoglaló – {datetime.now().strftime('%Y. %m. 
         part1 = await self._ask_groq(part1_prompt, max_tokens=700)
 
         # RÉSZ 2: Vegyipari + stratégiai ajánlás
-        part2_prompt = f"""Te egy tapasztalt takarmányipari alapanyag-beszerző tanácsadó vagy.
+        part2_prompt = f"""Fontos: helyes magyar helyesírást használj.
+Te egy tapasztalt takarmányipari alapanyag-beszerző tanácsadó vagy.
 
 JELENLEGI VEGYIPARI REFERENCIA ÁRAK ÉS TRENDEK (EU import, USD/tonna):
 {specialty_text}
