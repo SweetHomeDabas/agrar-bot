@@ -241,16 +241,6 @@ SPECIALTY_COMMODITIES = {
     },
 
     # === EGYÉB TAKARMÁNY-ADALÉKOK ===
-    "Fitáz (10000 FTU/g)": {
-        "emoji": "🦠", "category": "Adalék",
-        "ref_price": 18000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Novozymes (DK), AB Vista (UK)",
-        "buy_strategy": "Éves tender ajánlott nagy volumenre — jelentős árkülönbség gyártónként",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "stabil", "Q4": "emelkedő"},
-        "price_drivers": ["búza/árpa ár (foszfor tartalom)", "EU foszfor szabályozás"],
-        "search_keywords": ["phytase price feed enzyme", "DSM Ronozyme BASF Natuphos"],
-    },
     "Betain (anhidrid 97%)": {
         "emoji": "🌊", "category": "Adalék",
         "ref_price": 1800,
