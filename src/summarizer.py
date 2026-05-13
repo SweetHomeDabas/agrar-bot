@@ -109,7 +109,7 @@ FRISS HÍREK:
 Légy konkrét, számszerű és szakszerű. Telegram formátum, emoji-kkal.
 Kezdd: 🌅 *Reggeli piaci összefoglaló – {datetime.now().strftime('%Y. %m. %d.')}*"""
 
-        part1 = await self._ask_groq(part1_prompt, max_tokens=500)
+        part1 = await self._ask_groq(part1_prompt, max_tokens=700)
 
         # RÉSZ 2: Vegyipari + stratégiai ajánlás
         part2_prompt = f"""Te egy tapasztalt takarmányipari alapanyag-beszerző tanácsadó vagy.
@@ -133,7 +133,7 @@ VÁSÁRLÁSI STRATÉGIA ALAPANYAGONKÉNT:
 Légy konkrét és gyakorlatias. Telegram formátum.
 Kezdd: 📊 *Stratégiai vásárlási ajánlás – {quarter}*"""
 
-        part2 = await self._ask_groq(part2_prompt, max_tokens=500)
+        part2 = await self._ask_groq(part2_prompt, max_tokens=700)
 
         return f"{part1}\n\n{part2}"
 
