@@ -38,6 +38,19 @@ class Summarizer:
             log.error(f"Groq API hiba: {e}")
             return "⚠️ Az összefoglalót nem sikerült generálni."
 
+    def _format_traded_prices(self, changes: dict) -> str:
+        by_cat = changes.get("by_category", {})
+        lines = []
+        for cat in ["Gabona", "Olajnövény", "Energia", "Egyéb"]:
+            items = [p for p in by_cat.get(cat, []) if not p.is_reference]
+            if not items:
+                continue
+            lines.append(f"\n── {cat} ──")
+            for p in items:
+                arrow = "🔺" if p.change_pct > 0 else ("🔻" if p.change_pct < 0 else "➡️")
+                lines.append(f"{p.emoji} {p.name}: {p.price:.2f} USD/t ({arrow}{p.change_pct:+.1f}%)")
+        return "\n".join(lines)
+
     def _format_specialty_prices(self, prices: list[PriceData]) -> str:
         by_cat: dict[str, list[PriceData]] = {}
         for p in prices:
@@ -53,26 +66,6 @@ class Summarizer:
                 trend = p.seasonal_trend.get(CURRENT_QUARTER, "stabil")
                 lines.append(
                     f"{p.emoji} {p.name}: ~{p.price:,.0f} USD/t | {CURRENT_QUARTER}: {trend}"
-                )
-        return "\n".join(lines)
-
-    def _format_specialty_prices(self, prices: list[PriceData]) -> str:
-        by_cat: dict[str, list[PriceData]] = {}
-        for p in prices:
-            if p.is_reference:
-                by_cat.setdefault(p.category, []).append(p)
-
-        lines = []
-        for cat in ["Aminosav", "Vitamin", "Mikroelem", "Adalék"]:
-            items = by_cat.get(cat, [])
-            if not items:
-                continue
-            lines.append(f"\n*{cat}:*")
-            for p in items:
-                trend = p.seasonal_trend.get(CURRENT_QUARTER, "stabil")
-                lines.append(
-                    f"  {p.emoji} {p.name}: ~{p.price:,.0f} USD/t "
-                    f"| {CURRENT_QUARTER} trend: {trend}"
                 )
         return "\n".join(lines)
 
