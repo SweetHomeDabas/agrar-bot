@@ -1,7 +1,6 @@
 """
 Claude API-alapú összefoglalók generálása az áradatokból és hírekből.
 """
-
 import logging
 import httpx
 from price_monitor import PriceData
@@ -9,25 +8,29 @@ from news_monitor import NewsItem
 
 log = logging.getLogger(__name__)
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 class Summarizer:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    async def _ask_gemini(self, prompt: str) -> str:
+    async def _ask_groq(self, prompt: str) -> str:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.post(
-                    GEMINI_URL,
-                    params={"key": self.api_key},
-                    json={"contents": [{"parts": [{"text": prompt}]}]}
+                    GROQ_URL,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={
+                        "model": "llama-3.1-8b-instant",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 700
+                    }
                 )
                 r.raise_for_status()
-                return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            log.error(f"Gemini API hiba: {e}")
+            log.error(f"Groq API hiba: {e}")
             return "⚠️ Az összefoglalót nem sikerült generálni."
 
     def _format_prices(self, changes: dict) -> str:
@@ -61,7 +64,7 @@ Tartalmazza: legfontosabb árváltozások (1-2 mondat), hírek értékelése (2-
 Telegram üzenet formátum, emoji-kkal. Max 280 szó.
 Kezdd: 🌅 *Reggeli piaci összefoglaló*
 """
-        return await self._ask_gemini(prompt)
+        return await self._ask_groq(prompt)
 
     async def create_breaking_summary(self, news: list[NewsItem]) -> str:
         news_text = "\n".join(
@@ -77,7 +80,7 @@ HÍREK:
 
 Kezdd: 🚨 *SÜRGŐS PIACI RIASZTÁS*
 """
-        return await self._ask_gemini(prompt)
+        return await self._ask_groq(prompt)
 
     async def create_price_alert_summary(self, alerts: list[PriceData]) -> str:
         lines = [
@@ -93,4 +96,4 @@ Lehetséges okok és következmények, szakszerűen de közérthetően.
 
 Kezdd: ⚡ *EXTRÉM ÁRVÁLTOZÁS ÉSZLELVE*
 """
-        return await self._ask_gemini(prompt)
+        return await self._ask_groq(prompt)
