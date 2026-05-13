@@ -129,7 +129,7 @@ SPECIALTY_COMMODITIES = {
     },
     "E-vitamin 50% por": {
         "emoji": "💊", "category": "Vitamin",
-        "ref_price": 3800,
+        "ref_price": 12000,
         "unit": "USD/t",
         "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Zhejiang NHU (CN), Adisseo (FR)",
         "buy_strategy": "NHU árkövető — kínai újév előtt érdemes vásárolni",
