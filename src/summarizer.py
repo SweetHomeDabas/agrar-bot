@@ -1,6 +1,7 @@
 """
-Groq API alapú összefoglalók - INGYENES
-Részletes reggeli elemzés: árak + hírek + stratégiai ajánlás
+Groq API alapú összefoglalók
+Tőzsdei árak: USD/t + HUF/t
+Vegyipari árak: EUR/kg (valós piaci árak, CIF Magyarország)
 """
 
 import logging
@@ -8,19 +9,24 @@ from datetime import datetime
 import httpx
 from price_monitor import PriceData
 from news_monitor import NewsItem
+from currency import get_exchange_rates
 
 log = logging.getLogger(__name__)
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-
 CURRENT_QUARTER = f"Q{(datetime.now().month - 1) // 3 + 1}"
+HU_LOGISTICS = 1.08  # 8% logisztikai felár
 
 
 class Summarizer:
     def __init__(self, api_key: str):
         self.api_key = api_key
+        self._rates = {"USD_HUF": 360.0, "USD_EUR": 0.92}
 
-    async def _ask_groq(self, prompt: str, max_tokens: int = 900) -> str:
+    async def refresh_rates(self):
+        self._rates = await get_exchange_rates()
+
+    async def _ask_groq(self, prompt: str, max_tokens: int = 800) -> str:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.post(
@@ -36,139 +42,155 @@ class Summarizer:
                 return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
             log.error(f"Groq API hiba: {e}")
-            return "⚠️ Az összefoglalót nem sikerült generálni."
+            return "Az osszefoglalot nem sikerult generalni."
 
-    def _format_traded_prices(self, changes: dict) -> str:
-        by_cat = changes.get("by_category", {})
-        lines = []
-        for cat in ["Gabona", "Olajnövény", "Energia", "Egyéb"]:
-            items = [p for p in by_cat.get(cat, []) if not p.is_reference]
+    def _usd_to_huf(self, usd_t: float) -> int:
+        return int(usd_t * HU_LOGISTICS * self._rates["USD_HUF"])
+
+    def _format_traded(self, changes: dict) -> str:
+        lines = [f"[Arfolyam: 1 USD = {self._rates['USD_HUF']:.0f} HUF]"]
+        for cat in ["Gabona", "Olajnoveny", "Energia", "Egyeb"]:
+            items = [p for p in changes["all"]
+                     if not p.is_reference and p.category == cat]
+            if not items:
+                for key, val in changes.get("by_category", {}).items():
+                    if cat[:5].lower() in key.lower():
+                        items = [p for p in val if not p.is_reference]
+                        break
             if not items:
                 continue
-            lines.append(f"\n── {cat} ──")
+            lines.append(f"\n-- {cat} --")
             for p in items:
-                arrow = "🔺" if p.change_pct > 0 else ("🔻" if p.change_pct < 0 else "➡️")
-                lines.append(f"{p.emoji} {p.name}: {p.price:.2f} USD/t ({arrow}{p.change_pct:+.1f}%)")
+                arrow = "fel" if p.change_pct > 0 else ("le" if p.change_pct < 0 else "=")
+                huf = self._usd_to_huf(p.price)
+                lines.append(
+                    f"{p.emoji} {p.name}: {p.price:.1f} USD/t "
+                    f"({huf:,} HUF/t) {arrow}{p.change_pct:+.1f}%"
+                )
         return "\n".join(lines)
 
-    def _format_specialty_prices(self, prices: list[PriceData]) -> str:
+    def _format_specialty(self, prices: list[PriceData]) -> str:
         by_cat: dict[str, list[PriceData]] = {}
         for p in prices:
             if p.is_reference:
                 by_cat.setdefault(p.category, []).append(p)
+
         lines = []
-        for cat in ["Aminosav", "Vitamin", "Mikroelem", "Adalék"]:
+        for cat in ["Aminosav", "Vitamin", "Mikroelem", "Adalek"]:
             items = by_cat.get(cat, [])
             if not items:
+                for key in by_cat:
+                    if cat[:5].lower() in key.lower():
+                        items = by_cat[key]
+                        break
+            if not items:
                 continue
-            lines.append(f"\n── {cat} ──")
+            lines.append(f"\n-- {cat} --")
             for p in items:
-                trend = p.seasonal_trend.get(CURRENT_QUARTER, "stabil")
+                buy_flag = " [MOST KEDVEZO]" if p.buy_now else ""
                 lines.append(
-                    f"{p.emoji} {p.name}: ~{p.price:,.0f} USD/t | {CURRENT_QUARTER}: {trend}"
+                    f"{p.emoji} {p.name}: {p.eur_kg:.2f} EUR/kg "
+                    f"(sav: {p.eur_range} EUR/kg) | {p.trend}{buy_flag}"
                 )
+                if p.outlook:
+                    lines.append(f"   -> {p.outlook}")
         return "\n".join(lines)
 
-    def _format_buy_strategy(self, prices: list[PriceData]) -> str:
+    def _format_buy_recs(self, prices: list[PriceData]) -> str:
+        now_list = [p for p in prices if p.is_reference and p.buy_now]
+        watch_list = [p for p in prices if p.is_reference and not p.buy_now
+                      and "emelk" in p.trend.lower()]
         lines = []
-        for p in prices:
-            if p.is_reference and p.buy_strategy:
-                trend = p.seasonal_trend.get(CURRENT_QUARTER, "stabil")
-                lines.append(f"  {p.emoji} *{p.name}*: {p.buy_strategy}")
-        return "\n".join(lines[:8])  # max 8 termék a tömörség miatt
+        if now_list:
+            lines.append("MOST ERDEMES VASAROLNI:")
+            for p in now_list:
+                lines.append(f"  {p.emoji} {p.name}: {p.eur_kg:.2f} EUR/kg ({p.eur_range} EUR/kg)")
+                lines.append(f"     {p.buy_strategy}")
+        if watch_list:
+            lines.append("\nFIGYELJ – AREMELKEDES VARHATO:")
+            for p in watch_list[:4]:
+                lines.append(f"  {p.emoji} {p.name}: {p.eur_kg:.2f} EUR/kg")
+                lines.append(f"     {p.outlook}")
+        return "\n".join(lines)
 
     def _format_news(self, news: list[NewsItem]) -> str:
         if not news:
-            return "Nincs releváns friss hír."
-        return "\n".join(f"• [{i.source}] {i.title}" for i in news[:12])
+            return "Nincs relevans friss hir."
+        return "\n".join(f"[{i.source}] {i.title}" for i in news[:10])
 
     async def create_morning_summary(self, changes: dict, news: list[NewsItem]) -> str:
-        traded_text = self._format_traded_prices(changes)
-        specialty_text = self._format_specialty_prices(changes["all"])
-        buy_text = self._format_buy_strategy(changes["all"])
-        news_text = self._format_news(news)
-        quarter = CURRENT_QUARTER
+        await self.refresh_rates()
+        traded = self._format_traded(changes)
+        specialty = self._format_specialty(changes["all"])
+        buy_recs = self._format_buy_recs(changes["all"])
+        news_txt = self._format_news(news)
+        q = CURRENT_QUARTER
+        date_str = datetime.now().strftime("%Y. %m. %d.")
 
-        # RÉSZ 1: Tőzsdei árak + hírek összefoglalója
-        part1_prompt = f"""Fontos: helyes magyar helyesírást használj.
-Te egy tapasztalt mezőgazdasági és takarmányipari alapanyag-piaci elemző vagy.
+        p1 = await self._ask_groq(f"""Helyes magyar helyesirassal irj!
+Mezogazdasagi es takarmanyipari elemzo vagy. Magyar termeloknek, takarmanygyartoknak irsz.
 
-MAI TŐZSDEI ÁRAK (USD/tonna):
-{traded_text}
+MAI TOZSDEI ARAK (vilagpiaci ar USD/t, magyar ar HUF/t):
+{traded}
 
-FRISS HÍREK:
-{news_text}
+FRISS HIREK:
+{news_txt}
 
-Írj tömör PIACI ÖSSZEFOGLALÓT magyarul (max 200 szó):
-1. Legfontosabb tőzsdei árváltozások és várható hatásuk a takarmányköltségekre
-2. Hírek értékelése — mi befolyásolhatja az árakat rövid távon?
-3. Mai fő kockázatok és lehetőségek
+Irj tomor PIACI OSSZEFOGLALOT magyarul (max 200 szo):
+1. Legfontosabb arvaltozasok – emlitsd az USD es HUF arakat is
+2. Hirek ertelelese – rovid tavu hatasa az alapanyag arakra
+3. Fo kockazatok es lehetosegek ma
 
-Légy konkrét, számszerű és szakszerű. Telegram formátum, emoji-kkal.
-Kezdd: 🌅 *Reggeli piaci összefoglaló – {datetime.now().strftime('%Y. %m. %d.')}*"""
+Telegram formatumu szoveg, rovid bekezdesek.
+Kezdd: Reggeli piaci osszefoglalo – {date_str}""", max_tokens=600)
 
-        part1 = await self._ask_groq(part1_prompt, max_tokens=700)
+        p2 = await self._ask_groq(f"""Helyes magyar helyesirassal irj!
+Tapasztalt takarmanyipari alapanyag-beszerzo tanacsado vagy.
+Az arak EUR/kg-ban vannak megadva (CIF Magyarorszag, 2026 {q}).
 
-        # RÉSZ 2: Vegyipari + stratégiai ajánlás
-        part2_prompt = f"""Fontos: helyes magyar helyesírást használj.
-Te egy tapasztalt takarmányipari alapanyag-beszerző tanácsadó vagy.
+VEGYIPARI ALAPANYAGOK AKTUALIS ARAI:
+{specialty}
 
-JELENLEGI VEGYIPARI REFERENCIA ÁRAK ÉS TRENDEK (EU import, USD/tonna):
-{specialty_text}
+VASARLASI JAVASLATOK:
+{buy_recs}
 
-VÁSÁRLÁSI STRATÉGIA RÉSZLETESEN (ár + ajánlás):
-{buy_text}
+Irj STRATEGIAI VASARLASI AJANLAST magyarul (max 220 szo):
+1. {q}-ban: melyiknel kedvezo most az ar EUR/kg-ban? Miert?
+2. Hol varhato aremelkedes? Mennyivel?
+3. Top 3 konkret javaslat – minden mellol irj EUR/kg arszintet!
 
-AKTUÁLIS NEGYEDÉV: {quarter}
+Telegram formatumu szoveg.
+Kezdd: Strategiai vasarlasi ajanlat – {q}""", max_tokens=600)
 
-VÁSÁRLÁSI STRATÉGIA ALAPANYAGONKÉNT:
-{buy_text}
-
-Írj rövid STRATÉGIAI AJÁNLÁST magyarul (max 200 szó):
-1. {quarter}-ban mire érdemes most fókuszálni? (mely alapanyagoknál kedvező most vásárolni?)
-2. Mely alapanyagoknál várható áremelkedés a következő negyedévben?
-3. Top 3 konkrét javaslat: mit, mikor, mennyit érdemes most venni/tartani?
-
-Légy konkrét és gyakorlatias. Telegram formátum.
-Kezdd: 📊 *Stratégiai vásárlási ajánlás – {quarter}*"""
-
-        part2 = await self._ask_groq(part2_prompt, max_tokens=700)
-
-        return f"{part1}\n\n{part2}"
+        return f"{p1}\n\n{p2}"
 
     async def create_breaking_summary(self, news: list[NewsItem]) -> str:
-        news_text = "\n".join(
-            f"• [{i.source}] {i.title}\n  {i.summary[:200]}"
-            for i in news
-        )
-        prompt = f"""Takarmányipari alapanyag-piaci elemzőként írj rövid (max 180 szó) magyar RIASZTÁST.
-Az alábbi hírek azonnal befolyásolhatják az alapanyagárakat.
+        news_txt = "\n".join(f"[{i.source}] {i.title}\n  {i.summary[:200]}" for i in news)
+        return await self._ask_groq(f"""Helyes magyar helyesirassal irj!
+Takarmanyipari elemzokent irj rovid (max 180 szo) magyar RIASZTAST.
 
-BREAKING HÍREK:
-{news_text}
+BREAKING HIREK:
+{news_txt}
 
-Magyarázd el:
-- Mi történt pontosan?
-- Mely alapanyagokat érinti? (gabona, aminosav, vitamin, mikroelem?)
-- Milyen árirányt valószínűsít rövid távon?
-- Mit tegyen most a beszerző? (várjon / vegyen előre / fedezze magát)
+Mi tortent? Mely alapanyagokat erinti? Milyen ariranyt valoszinusit?
+Mit tegyen most a beszerzo?
 
-Kezdd: 🚨 *SÜRGŐS PIACI RIASZTÁS*"""
-        return await self._ask_groq(prompt, max_tokens=450)
+Kezdd: SURGOS PIACI RIASZTAS""", max_tokens=450)
 
     async def create_price_alert_summary(self, alerts: list[PriceData]) -> str:
+        await self.refresh_rates()
         lines = [
-            f"• {p.emoji} {p.name}: {p.price:.2f} USD/t "
-            f"({'emelkedett' if p.change_pct > 0 else 'csökkent'} {abs(p.change_pct):.1f}%-ot)"
+            f"{p.emoji} {p.name}: {p.price:.1f} USD/t ({self._usd_to_huf(p.price):,} HUF/t) "
+            f"({'emelkedett' if p.change_pct > 0 else 'csokkent'} {abs(p.change_pct):.1f}%-ot)"
             for p in alerts
         ]
-        prompt = f"""Írj rövid (max 150 szó) magyar ÁRRIASZTÁST.
+        return await self._ask_groq(f"""Helyes magyar helyesirassal irj!
+Irj rovid (max 150 szo) magyar ARRIASZTAST.
 
-EXTRÉM MOZGÁSOK:
+EXTREM MOZGASOK:
 {chr(10).join(lines)}
 
-Elemezd: lehetséges okok, kapcsolódó alapanyagokra gyakorolt hatás, rövid távú kilátás.
-Konkrét beszerző ajánlás: most vegyen, várjon, vagy fedezze magát?
+Lehetseges okok, kapcsolodo hatas, rovid tavu kilatas.
+Beszerzo ajanlat: most vegyen, varjon, fedezze magat?
 
-Kezdd: ⚡ *EXTRÉM ÁRVÁLTOZÁS ÉSZLELVE*"""
-        return await self._ask_groq(prompt, max_tokens=400)
+Kezdd: EXTREM ARVALTOZAS ESZLELVE""", max_tokens=400)

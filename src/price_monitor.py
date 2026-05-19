@@ -1,7 +1,7 @@
 """
 Mezőgazdasági, vegyipari és takarmány alapanyagárak figyelése.
-Tőzsdei árak: Yahoo Finance (USD/tonna)
-Vegyipari árak: referencia + hírfigyelés alapján
+Tőzsdei árak: Yahoo Finance (USD/tonna és HUF/tonna)
+Vegyipari árak: EUR/kg (piaci kutatás alapján, 2026 Q2, CIF Magyarország)
 """
 
 import asyncio
@@ -13,263 +13,283 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-# TŐZSDEI TERMÉKEK (Yahoo Finance, USD/tonna)
-# ─────────────────────────────────────────────
 TRADED_COMMODITIES = {
-    # GABONÁK
-    "búza":      {"ticker": "ZW=F", "emoji": "🌾", "category": "Gabona",
-                  "convert": lambda p: (p/100)*36.744},
-    "kukorica":  {"ticker": "ZC=F", "emoji": "🌽", "category": "Gabona",
-                  "convert": lambda p: (p/100)*39.368},
-    "szójabab":  {"ticker": "ZS=F", "emoji": "🫘", "category": "Gabona",
-                  "convert": lambda p: (p/100)*36.744},
-    "árpa":      {"ticker": "ZW=F", "emoji": "🌿", "category": "Gabona",
-                  "convert": lambda p: (p/100)*36.744*0.90},
-    "rozs":      {"ticker": "ZW=F", "emoji": "🍞", "category": "Gabona",
-                  "convert": lambda p: (p/100)*36.744*0.88},
-    # OLAJOK
-    "szójaolaj":      {"ticker": "ZL=F", "emoji": "🫙", "category": "Olajnövény",
-                       "convert": lambda p: (p/100)*2204.62},
-    "pálmaolaj":      {"ticker": "FCPO.KL", "emoji": "🌴", "category": "Olajnövény",
-                       "convert": lambda p: p*0.21},
-    "repceolaj":      {"ticker": "RS=F", "emoji": "🟡", "category": "Olajnövény",
-                       "convert": lambda p: p*0.74},
-    "napraforgóolaj": {"ticker": "ZL=F", "emoji": "🌻", "category": "Olajnövény",
-                       "convert": lambda p: (p/100)*2204.62*1.05},
-    # ENERGIA
-    "nyersolaj": {"ticker": "CL=F", "emoji": "🛢️", "category": "Energia",
-                  "convert": lambda p: p},
-    "földgáz":   {"ticker": "NG=F", "emoji": "🔥", "category": "Energia",
-                  "convert": lambda p: p},
-    # EGYÉB
-    "cukor":     {"ticker": "SB=F", "emoji": "🍬", "category": "Egyéb",
-                  "convert": lambda p: (p/100)*2204.62},
+    "búza":           {"ticker": "ZW=F",    "emoji": "🌾", "category": "Gabona",    "convert": lambda p: (p/100)*36.744},
+    "kukorica":       {"ticker": "ZC=F",    "emoji": "🌽", "category": "Gabona",    "convert": lambda p: (p/100)*39.368},
+    "szójabab":       {"ticker": "ZS=F",    "emoji": "🫘", "category": "Gabona",    "convert": lambda p: (p/100)*36.744},
+    "árpa":           {"ticker": "ZW=F",    "emoji": "🌿", "category": "Gabona",    "convert": lambda p: (p/100)*36.744*0.90},
+    "rozs":           {"ticker": "ZW=F",    "emoji": "🍞", "category": "Gabona",    "convert": lambda p: (p/100)*36.744*0.88},
+    "szójaolaj":      {"ticker": "ZL=F",    "emoji": "🫙", "category": "Olajnövény","convert": lambda p: (p/100)*2204.62},
+    "pálmaolaj":      {"ticker": "FCPO.KL", "emoji": "🌴", "category": "Olajnövény","convert": lambda p: p*0.21},
+    "repceolaj":      {"ticker": "RS=F",    "emoji": "🟡", "category": "Olajnövény","convert": lambda p: p*0.74},
+    "napraforgóolaj": {"ticker": "ZL=F",    "emoji": "🌻", "category": "Olajnövény","convert": lambda p: (p/100)*2204.62*1.05},
+    "nyersolaj":      {"ticker": "CL=F",    "emoji": "🛢️", "category": "Energia",   "convert": lambda p: p},
+    "földgáz":        {"ticker": "NG=F",    "emoji": "🔥", "category": "Energia",   "convert": lambda p: p},
+    "cukor":          {"ticker": "SB=F",    "emoji": "🍬", "category": "Egyéb",     "convert": lambda p: (p/100)*2204.62},
 }
 
-# ─────────────────────────────────────────────
-# VEGYIPARI / TAKARMÁNY ALAPANYAGOK
-# Referencia árak + szezonális trend + forrás
-# Árak: EU import ár közelítés (USD/tonna)
-# ─────────────────────────────────────────────
+# Vegyipari referencia árak – EUR/kg (CIF Magyarország, 2026 Q2)
+# Forrás: Chemanalyst, Feedinfo, IMARC, Tradeasia, piaci adatok
 SPECIALTY_COMMODITIES = {
 
     # === AMINOSAVAK ===
     "L-Lizin HCl 98.5%": {
         "emoji": "🧪", "category": "Aminosav",
-        "ref_price": 1450,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: CJ BIO (KR), Evonik (DE), Global Bio-chem (CN)",
-        "buy_strategy": "Q1 vége / Q2 eleje szokott olcsóbb lenni (kínai újév utáni készlet)",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "csökkenő", "Q3": "emelkedő", "Q4": "csúcs"},
-        "price_drivers": ["kukorica ár", "kínai energia költség", "USD/CNY árfolyam"],
-        "search_keywords": ["lysine price", "L-lysine HCl market", "CJ BIO lysine"],
+        "eur_kg": 1.55,          # EU spot: 1.45–1.65 EUR/kg (Q2 2026, anti-dumping vám után stabilizálódott)
+        "eur_range": "1.45–1.65",
+        "trend": "stabil",
+        "outlook": "Q1 2026-ban anti-dumping vámok emelték az árat, most stabilizálódott. Q3 enyhe emelkedés lehetséges.",
+        "buy_now": False,
+        "supplier_hint": "CJ BIO (KR), Evonik (DE), Meihua (CN), Ningxia Eppen (CN)",
+        "buy_strategy": "Most stabil ár – spot vásárlás megfelelő. Q3 emelkedés előtt érdemes 6-8 heti készletet tartani.",
+        "seasonal_trend": {"Q1": "emelkedő", "Q2": "stabil", "Q3": "enyhe emelkedés", "Q4": "stabil"},
+        "price_drivers": ["kukorica ár", "anti-dumping vámok EU-ban", "kínai export"],
     },
     "DL-Metionin 99%": {
         "emoji": "⚗️", "category": "Aminosav",
-        "ref_price": 2800,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Evonik (DE), Adisseo (FR/CN), Sumitomo (JP), Novus (US)",
-        "buy_strategy": "Q2-Q3 kedvezőbb, Q4 előtt érdemes készletet építeni",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "enyhén csökkenő", "Q3": "stabil", "Q4": "emelkedő"},
-        "price_drivers": ["propilén ár", "energia költség", "EU kereslet"],
-        "search_keywords": ["methionine price", "DL-methionine market", "Evonik methionine"],
+        "eur_kg": 3.10,          # EU CIF: 2.90–3.30 EUR/kg (Q2 2026, ~3000 USD/t Németország)
+        "eur_range": "2.90–3.30",
+        "trend": "stabil",
+        "outlook": "2026-ban 2,800–3,400 USD/t sávban stabil. Q3 enyhe emelkedés várható.",
+        "buy_now": False,
+        "supplier_hint": "Evonik (DE) – MetAMINO, Adisseo (FR) – Rhodimet, Novus (US) – ALIMET, NHU (CN)",
+        "buy_strategy": "Q2 vége – Q3 közepe a legjobb időszak. Q4 előtt érdemes 2-3 havi készletet venni.",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "enyhe emelkedés", "Q4": "csúcs"},
+        "price_drivers": ["propilén ár", "energia EU", "takarmány kereslet Q4"],
     },
     "L-Treonin 98.5%": {
         "emoji": "🔬", "category": "Aminosav",
-        "ref_price": 1200,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: CJ BIO (KR), Meihua (CN), Fufeng (CN)",
-        "buy_strategy": "Kínai gyártók dominálják, Q1-Q2 szokott kedvező lenni",
-        "seasonal_trend": {"Q1": "csökkenő", "Q2": "stabil", "Q3": "emelkedő", "Q4": "stabil"},
-        "price_drivers": ["kukorica ár", "kínai export kvóta", "USD/CNY"],
-        "search_keywords": ["threonine price", "L-threonine market"],
+        "eur_kg": 1.15,          # EU CIF: 1.05–1.25 EUR/kg (Q2 2026)
+        "eur_range": "1.05–1.25",
+        "trend": "csökkenő",
+        "outlook": "Kínai túlkínálat nyomja, most historikusan alacsony szinten. Q3 stabilizálódás várható.",
+        "buy_now": True,
+        "supplier_hint": "CJ BIO (KR), Meihua (CN), Fufeng (CN)",
+        "buy_strategy": "MOST KEDVEZO – historikusan alacsony ár. 2-3 havi készlet felvétele ajánlott.",
+        "seasonal_trend": {"Q1": "csökkenő", "Q2": "alacsony", "Q3": "stabil", "Q4": "enyhe emelkedés"},
+        "price_drivers": ["kukorica ár", "kínai termelési kapacitás", "USD/CNY"],
     },
     "L-Triptofán 98%": {
         "emoji": "💉", "category": "Aminosav",
-        "ref_price": 8500,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: CJ BIO (KR), Ajinomoto (JP), Meihua (CN)",
-        "buy_strategy": "Magas ár, kisebb mennyiség — forward árazás ajánlott",
+        "eur_kg": 7.80,          # EU CIF: 7.20–8.40 EUR/kg (Q2 2026)
+        "eur_range": "7.20–8.40",
+        "trend": "stabil",
+        "outlook": "Stabil, Q3-Q4 emelkedés lehetséges szezonális kereslet miatt.",
+        "buy_now": False,
+        "supplier_hint": "CJ BIO (KR), Ajinomoto (JP), Meihua (CN)",
+        "buy_strategy": "Forward árazás ajánlott nagyobb mennyiségnél. Q3 előtt érdemes biztosítani.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "csúcs"},
-        "price_drivers": ["fermentációs kapacitás", "kereslet baromfi szektorból"],
-        "search_keywords": ["tryptophan price", "L-tryptophan feed grade"],
+        "price_drivers": ["fermentációs kapacitás", "baromfi kereslet"],
     },
     "L-Valin 98%": {
         "emoji": "🧫", "category": "Aminosav",
-        "ref_price": 4200,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: CJ BIO (KR), Evonik (DE), Meihua (CN)",
-        "buy_strategy": "Viszonylag stabil, spot vásárlás ajánlott kisebb mennyiségnél",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "stabil"},
-        "price_drivers": ["kínai kapacitás bővülés", "sertés szektor kereslet"],
-        "search_keywords": ["valine price", "L-valine feed grade market"],
+        "eur_kg": 3.90,          # EU CIF: 3.60–4.20 EUR/kg (Q2 2026)
+        "eur_range": "3.60–4.20",
+        "trend": "stabil",
+        "outlook": "Stabil, spot vásárlás megfelelő.",
+        "buy_now": False,
+        "supplier_hint": "CJ BIO (KR), Evonik (DE), Meihua (CN)",
+        "buy_strategy": "Spot vásárlás megfelelő – stabil ár, nincs különleges sürgetés.",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "enyhe emelkedés", "Q4": "stabil"},
+        "price_drivers": ["kínai kapacitás", "sertés szektor kereslet"],
     },
 
     # === VITAMINOK ===
-    "A-vitamin 1000kIU": {
+    "A-vitamin 1000 IU/g": {
         "emoji": "🟠", "category": "Vitamin",
-        "ref_price": 28000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Zhejiang NHU (CN)",
-        "buy_strategy": "NHU dominál — gyári karbantartás idején (tipikusan Q2/Q4) ár ugrik",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "emelkedő", "Q3": "csökkenő", "Q4": "emelkedő"},
+        "eur_kg": 20.00,         # EU CIF: 17–23 EUR/kg (Q2 2026, NHU-függő)
+        "eur_range": "17–23",
+        "trend": "stabil",
+        "outlook": "NHU gyárleállás esetén hirtelen +30-50% lehetséges! Q4 előtt emelkedés szokásos.",
+        "buy_now": False,
+        "supplier_hint": "Zhejiang NHU (CN) – piaci domináns, DSM-Firmenich (NL), BASF (DE)",
+        "buy_strategy": "Q3 közepéig érdemes 3-4 havi készletet építeni. NHU hírek kritikusak!",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "csúcs"},
         "price_drivers": ["NHU gyárleállás", "citral ár", "kínai energia"],
-        "search_keywords": ["vitamin A price", "retinyl acetate market", "NHU vitamin A"],
     },
-    "D3-vitamin 500kIU": {
+    "D3-vitamin 500 IU/g": {
         "emoji": "☀️", "category": "Vitamin",
-        "ref_price": 15000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Zhejiang NHU (CN), Fermenta (IN)",
-        "buy_strategy": "Télen nagyobb a kereslet, nyáron érdemes készletet építeni",
+        "eur_kg": 13.50,         # EU CIF: 11–16 EUR/kg (Q2 2026, nyáron alacsonyabb)
+        "eur_range": "11–16",
+        "trend": "csökkenő",
+        "outlook": "Nyáron most a legolcsóbb. Q4-ben emelkedés biztos. Most érdemes venni!",
+        "buy_now": True,
+        "supplier_hint": "DSM-Firmenich (NL), BASF (DE), NHU (CN), Fermenta (IN)",
+        "buy_strategy": "MOST KEDVEZO – nyáron mindig a legalacsonyabb. Q3 végéig vedd meg a téli szükségletet.",
         "seasonal_trend": {"Q1": "csúcs", "Q2": "csökkenő", "Q3": "alacsony", "Q4": "emelkedő"},
-        "price_drivers": ["lanolin ár", "birkagyapjú supply", "szezonális kereslet"],
-        "search_keywords": ["vitamin D3 price", "cholecalciferol market feed grade"],
+        "price_drivers": ["lanolin ár", "birkagyapjú supply", "szezonális kereslet télen"],
     },
     "E-vitamin 50% por": {
         "emoji": "💊", "category": "Vitamin",
-        "ref_price": 12000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Zhejiang NHU (CN), Adisseo (FR)",
-        "buy_strategy": "NHU árkövető — kínai újév előtt érdemes vásárolni",
-        "seasonal_trend": {"Q1": "emelkedő", "Q2": "stabil", "Q3": "csökkenő", "Q4": "stabil"},
-        "price_drivers": ["izobutilén ár", "NHU kapacitás", "antioxidáns kereslet"],
-        "search_keywords": ["vitamin E price", "tocopherol acetate market", "NHU vitamin E"],
+        "eur_kg": 11.50,         # EU CIF: 10.5–12.5 EUR/kg (Q2 2026, a te adatod alapján ~11 EUR)
+        "eur_range": "10.5–12.5",
+        "trend": "stabil",
+        "outlook": "Stabil Q2-Q3. NHU kapacitás határozza meg. Kínai újév előtt szokott emelkedni.",
+        "buy_now": False,
+        "supplier_hint": "Zhejiang NHU (CN) – domináns, DSM-Firmenich (NL), BASF (DE), Adisseo (FR)",
+        "buy_strategy": "Jelenlegi ár reális. December előtt érdemes vásárolni a tavaszi szükségletre.",
+        "seasonal_trend": {"Q1": "emelkedő", "Q2": "stabil", "Q3": "stabil", "Q4": "enyhe emelkedés"},
+        "price_drivers": ["izobutilén ár", "NHU kapacitás", "kínai energia"],
     },
     "B1-vitamin (Tiamin)": {
         "emoji": "🟡", "category": "Vitamin",
-        "ref_price": 12000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), Jiangxi Tianxin (CN), Brother Enterprises (CN)",
-        "buy_strategy": "Kínai gyártók dominálnak, stabil ár — spot vásárlás megfelelő",
+        "eur_kg": 12.00,         # EU CIF: 10–14 EUR/kg (Q2 2026)
+        "eur_range": "10–14",
+        "trend": "stabil",
+        "outlook": "Stabil, kínai gyártók dominálják a piacot.",
+        "buy_now": False,
+        "supplier_hint": "DSM-Firmenich (NL), Jiangxi Tianxin (CN), Brother Enterprises (CN)",
+        "buy_strategy": "Spot vásárlás megfelelő – stabil ár.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "stabil", "Q4": "stabil"},
         "price_drivers": ["kínai export", "fermentációs kapacitás"],
-        "search_keywords": ["thiamine price", "vitamin B1 feed grade"],
     },
     "B2-vitamin (Riboflavin)": {
         "emoji": "🟠", "category": "Vitamin",
-        "ref_price": 9500,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), BASF (DE), Hubei Guangji (CN)",
-        "buy_strategy": "Q2-Q3 kedvezőbb historikusan",
+        "eur_kg": 9.50,          # EU CIF: 8.5–11 EUR/kg (Q2 2026)
+        "eur_range": "8.5–11",
+        "trend": "stabil",
+        "outlook": "Q2-Q3 kedvezőbb historikusan. Q4 előtt érdemes beszerezni.",
+        "buy_now": False,
+        "supplier_hint": "DSM-Firmenich (NL), BASF (DE), Hubei Guangji (CN)",
+        "buy_strategy": "Most megfelelő időszak. Q4 emelkedés szokásos.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "csökkenő", "Q3": "stabil", "Q4": "emelkedő"},
-        "price_drivers": ["fermentáció energia költség", "baromfi takarmány kereslet"],
-        "search_keywords": ["riboflavin price", "vitamin B2 market feed"],
+        "price_drivers": ["fermentáció energia", "baromfi takarmány kereslet"],
     },
     "B12-vitamin 1%": {
         "emoji": "🔴", "category": "Vitamin",
-        "ref_price": 45000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), Sanofi (FR), Hebei Yufeng (CN)",
-        "buy_strategy": "Magas értékű — forward szerződés ajánlott nagyobb mennyiségnél",
+        "eur_kg": 43.00,         # EU CIF: 37–49 EUR/kg (Q2 2026)
+        "eur_range": "37–49",
+        "trend": "stabil",
+        "outlook": "Stabil, Q3-Q4 enyhe emelkedés lehetséges. Éves szerződés ajánlott.",
+        "buy_now": False,
+        "supplier_hint": "DSM-Firmenich (NL), Hebei Yufeng (CN), Sanofi (FR)",
+        "buy_strategy": "Éves fix áras szerződés ajánlott nagyobb mennyiségnél.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "csúcs"},
         "price_drivers": ["kobalt ár", "fermentáció kapacitás", "humán/állat kereslet verseny"],
-        "search_keywords": ["vitamin B12 price", "cyanocobalamin market"],
     },
     "K3-vitamin (MSB)": {
         "emoji": "🟢", "category": "Vitamin",
-        "ref_price": 7500,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: DSM (NL), Jilin Zhongxin (CN), Hubei Shengbaiao (CN)",
-        "buy_strategy": "Stabil ár, spot vásárlás ajánlott",
+        "eur_kg": 7.00,          # EU CIF: 6–8 EUR/kg (Q2 2026)
+        "eur_range": "6–8",
+        "trend": "stabil",
+        "outlook": "Stabil, spot vásárlás megfelelő.",
+        "buy_now": False,
+        "supplier_hint": "DSM-Firmenich (NL), Jilin Zhongxin (CN), Hubei Shengbaiao (CN)",
+        "buy_strategy": "Spot vásárlás megfelelő – stabil ár.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "stabil", "Q4": "stabil"},
         "price_drivers": ["kínai kémiai alapanyag árak"],
-        "search_keywords": ["vitamin K3 price", "menadione MSB market"],
     },
 
     # === MIKROELEMEK ===
     "Cink-oxid 72%": {
         "emoji": "⬜", "category": "Mikroelem",
-        "ref_price": 2800,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Umicore (BE), Zinc Nacional (MX), kínai gyártók",
-        "buy_strategy": "Cink LME árhoz kötött — emelkedő trendnél érdemes előre vásárolni",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "emelkedő", "Q3": "stabil", "Q4": "csökkenő"},
-        "price_drivers": ["LME cink ár", "kínai termelés", "EU rendeletek (ZnO tiltás)"],
-        "search_keywords": ["zinc oxide price feed grade", "zinc sulfate market"],
+        "eur_kg": 2.60,          # EU CIF: 2.30–2.90 EUR/kg (Q2 2026)
+        "eur_range": "2.30–2.90",
+        "trend": "enyhén emelkedő",
+        "outlook": "LME cink emelkedő trend. Q3-ban áremelkedés várható.",
+        "buy_now": True,
+        "supplier_hint": "Umicore (BE), EverZinc (BE), Zinc Nacional (MX)",
+        "buy_strategy": "FIGYELJ – LME cink emelkedő. Most érdemes Q3 szükségletet biztosítani.",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "emelkedő", "Q3": "csúcs", "Q4": "csökkenő"},
+        "price_drivers": ["LME cink ár", "elektromos jármű kereslet", "kínai termelés"],
     },
-    "Mangán-oxid 60%": {
+    "Mangán-szulfát 32%": {
         "emoji": "🟤", "category": "Mikroelem",
-        "ref_price": 950,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: kínai bányák, Vale (BR)",
-        "buy_strategy": "Viszonylag stabil, éves szerződés ajánlott",
+        "eur_kg": 0.90,          # EU CIF: 0.75–1.05 EUR/kg (Q2 2026)
+        "eur_range": "0.75–1.05",
+        "trend": "stabil",
+        "outlook": "Stabil, éves szerződés ajánlott.",
+        "buy_now": False,
+        "supplier_hint": "Kínai bányák dominálnak, Vale (BR)",
+        "buy_strategy": "Éves szerződés ajánlott – stabil, kiszámítható ár.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "stabil", "Q4": "stabil"},
         "price_drivers": ["kínai bányatermelés", "acélipar kereslet"],
-        "search_keywords": ["manganese oxide price feed", "manganese sulfate market"],
     },
     "Réz-szulfát 25%": {
         "emoji": "🔵", "category": "Mikroelem",
-        "ref_price": 1650,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Codelco (CL), kínai gyártók",
-        "buy_strategy": "LME réz árhoz kötött — figyelj a réz trendekre",
+        "eur_kg": 1.55,          # EU CIF: 1.35–1.75 EUR/kg (Q2 2026)
+        "eur_range": "1.35–1.75",
+        "trend": "emelkedő",
+        "outlook": "LME réz emelkedő trend. Q3 áremelkedés valószínű.",
+        "buy_now": True,
+        "supplier_hint": "Codelco (CL), Aurubis (DE), kínai finomítók",
+        "buy_strategy": "FIGYELJ – LME réz emelkedő. Most érdemes beszerezni.",
         "seasonal_trend": {"Q1": "emelkedő", "Q2": "csúcs", "Q3": "csökkenő", "Q4": "stabil"},
-        "price_drivers": ["LME réz ár", "kínai ipar kereslet", "elektromos autó boom"],
-        "search_keywords": ["copper sulfate price feed grade", "LME copper"],
+        "price_drivers": ["LME réz ár", "elektromos autó kereslet", "kínai ipar"],
     },
-    "Szelén (Na-szelenát)": {
+    "Szelén (Na-szelenát 45%)": {
         "emoji": "🔶", "category": "Mikroelem",
-        "ref_price": 65000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Umicore (BE), kínai finomítók",
-        "buy_strategy": "Kis mennyiség, magas ár — éves szerződés ajánlott fix áron",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "stabil"},
+        "eur_kg": 55.00,         # EU CIF: 48–62 EUR/kg (Q2 2026)
+        "eur_range": "48–62",
+        "trend": "stabil",
+        "outlook": "Stabil. Félvezető ipar versenyez az ellátásért – kockázat.",
+        "buy_now": False,
+        "supplier_hint": "Umicore (BE), kínai réz finomítók melléktermék",
+        "buy_strategy": "Éves fix áras szerződés ajánlott – kis mennyiség, nagy érték.",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "enyhe emelkedés", "Q4": "stabil"},
         "price_drivers": ["réz finomítás melléktermék", "félvezető ipar kereslet"],
-        "search_keywords": ["selenium price feed grade", "sodium selenite market"],
     },
-    "Jód (KI / KIO3)": {
+    "Jód (KIO3 99%)": {
         "emoji": "🟣", "category": "Mikroelem",
-        "ref_price": 35000,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: SQM (CL), Algorta Norte (CL), ACF (JP)",
-        "buy_strategy": "Chilei termelés dominál — geopolitikai kockázat figyelendő",
+        "eur_kg": 30.00,         # EU CIF: 26–34 EUR/kg (Q2 2026)
+        "eur_range": "26–34",
+        "trend": "stabil",
+        "outlook": "Chilei termelés határozza meg – geopolitikai kockázat.",
+        "buy_now": False,
+        "supplier_hint": "SQM (CL), Algorta Norte (CL), ACF Minera (JP)",
+        "buy_strategy": "Éves szerződés ajánlott – Chiléből való függőség kockázat.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "emelkedő", "Q3": "stabil", "Q4": "stabil"},
-        "price_drivers": ["chilei bányatermelés", "gyógyszer ipar kereslet", "USD/CLP"],
-        "search_keywords": ["iodine price potassium iodide", "iodine market 2025"],
+        "price_drivers": ["chilei bányatermelés", "gyógyszer ipar kereslet"],
     },
     "Vas-szulfát 30%": {
         "emoji": "🔩", "category": "Mikroelem",
-        "ref_price": 280,
-        "unit": "USD/t",
-        "supplier_hint": "Sok EU és kínai gyártó — alacsony ár, könnyen elérhető",
-        "buy_strategy": "Helyi/EU forrás ajánlott szállítási költség miatt",
+        "eur_kg": 0.28,          # EU CIF: 0.23–0.33 EUR/kg (Q2 2026, helyi EU olcsóbb)
+        "eur_range": "0.23–0.33",
+        "trend": "stabil",
+        "outlook": "Stabil – helyi EU forrás ajánlott szállítási költség miatt.",
+        "buy_now": False,
+        "supplier_hint": "Sok EU gyártó – helyi/regionális forrás ajánlott",
+        "buy_strategy": "Helyi EU forrásból spot vásárlás – szállítási költség a döntő tényező.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "stabil", "Q4": "stabil"},
         "price_drivers": ["acélipar melléktermék", "szállítási költség"],
-        "search_keywords": ["ferrous sulfate price feed grade"],
     },
 
-    # === EGYÉB TAKARMÁNY-ADALÉKOK ===
-    "Betain (anhidrid 97%)": {
+    # === ADALÉKOK ===
+    "Betain anhidrid 97%": {
         "emoji": "🌊", "category": "Adalék",
-        "ref_price": 1800,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Danisco (DK), Agrana (AT), DuCoa (NL) — cukorrépából",
-        "buy_strategy": "EU cukorrépa szezonhoz kötött — Q4/Q1 kedvezőbb",
+        "eur_kg": 1.75,          # EU CIF: 1.50–2.00 EUR/kg (Q2 2026)
+        "eur_range": "1.50–2.00",
+        "trend": "stabil",
+        "outlook": "Q4/Q1 kedvezőbb (cukorrépa kampány szezon).",
+        "buy_now": False,
+        "supplier_hint": "Danisco/IFF (DK), Agrana (AT), DuCoa (NL) – EU cukorrépa alapú",
+        "buy_strategy": "Q4/Q1 a legjobb áridőszak – cukorrépa feldolgozás után bőséges kínálat.",
         "seasonal_trend": {"Q1": "alacsony", "Q2": "emelkedő", "Q3": "stabil", "Q4": "csökkenő"},
         "price_drivers": ["cukorrépa feldolgozás", "EU cukor ár", "metionin ár (alternatíva)"],
-        "search_keywords": ["betaine price feed grade", "betaine anhydrous market"],
     },
     "Kolin-klorid 60%": {
         "emoji": "🧂", "category": "Adalék",
-        "ref_price": 650,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Balchem (US), Jubilant (IN), kínai gyártók",
-        "buy_strategy": "Stabil ár, spot vásárlás megfelelő — helyi EU raktárak elérhetők",
-        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "emelkedő", "Q4": "stabil"},
-        "price_drivers": ["trimetilamin ár", "baromfi takarmány kereslet"],
-        "search_keywords": ["choline chloride price feed grade", "choline market 2025"],
+        "eur_kg": 0.62,          # EU CIF: 0.52–0.72 EUR/kg (Q2 2026)
+        "eur_range": "0.52–0.72",
+        "trend": "stabil",
+        "outlook": "Stabil. EU etilén-oxid szabályozás szűkíti a kínai importot – EU-konform forrás kötelező!",
+        "buy_now": False,
+        "supplier_hint": "Balchem (US), Jubilant (IN), BASF (DE) – EU etilén-oxid limit fontos!",
+        "buy_strategy": "EU-konform forrás kötelező. Spot vásárlás megfelelő.",
+        "seasonal_trend": {"Q1": "stabil", "Q2": "stabil", "Q3": "enyhe emelkedés", "Q4": "stabil"},
+        "price_drivers": ["metanol ár", "ammónia ár", "EU etilén-oxid szabályozás"],
     },
     "Ca-szappan (CSFA)": {
         "emoji": "🧼", "category": "Adalék",
-        "ref_price": 1200,
-        "unit": "USD/t",
-        "supplier_hint": "Fő gyártók: Bergafat (DE), Megalac (UK), Balakrishna (IN)",
-        "buy_strategy": "Pálmaolaj árhoz kötött — olaj csökkenésekor érdemes vásárolni",
+        "eur_kg": 1.10,          # EU CIF: 0.95–1.25 EUR/kg (Q2 2026)
+        "eur_range": "0.95–1.25",
+        "trend": "stabil",
+        "outlook": "Pálmaolaj árral együtt mozog.",
+        "buy_now": False,
+        "supplier_hint": "Bergafat/Evonik (DE), Megalac/Volac (UK), Balakrishna (IN)",
+        "buy_strategy": "Pálmaolaj csökkenésekor érdemes vásárolni – most stabil.",
         "seasonal_trend": {"Q1": "stabil", "Q2": "emelkedő", "Q3": "csúcs", "Q4": "csökkenő"},
         "price_drivers": ["pálmaolaj ár", "tejhaszon szarvasmarha kereslet"],
-        "search_keywords": ["calcium soap fatty acids price", "bypass fat rumen protected"],
     },
 }
 
@@ -281,7 +301,7 @@ EXTREME_THRESHOLD_PCT = 5.0
 class PriceData:
     name: str
     ticker: Optional[str]
-    price: float
+    price: float          # USD/t tőzsdeieknél, EUR/kg vegyipariaknál
     prev_close: float
     change_pct: float
     unit: str
@@ -289,6 +309,11 @@ class PriceData:
     category: str
     timestamp: datetime
     is_reference: bool = False
+    eur_kg: float = 0.0
+    eur_range: str = ""
+    trend: str = ""
+    outlook: str = ""
+    buy_now: bool = False
     supplier_hint: str = ""
     buy_strategy: str = ""
     seasonal_trend: dict = field(default_factory=dict)
@@ -332,31 +357,30 @@ class PriceMonitor:
                 category=info["category"], timestamp=datetime.now()
             )
         except Exception as e:
-            log.warning(f"Nem sikerült lekérdezni {name} ({ticker}): {e}")
+            log.warning(f"Nem sikerult lekerdezni {name} ({ticker}): {e}")
             return None
 
     async def get_all_prices(self) -> list[PriceData]:
-        # Tőzsdei árak párhuzamosan
-        traded_tasks = [
-            self.get_traded_price(name, info)
-            for name, info in TRADED_COMMODITIES.items()
-        ]
+        traded_tasks = [self.get_traded_price(n, i) for n, i in TRADED_COMMODITIES.items()]
         traded_results = await asyncio.gather(*traded_tasks)
         prices = [p for p in traded_results if p is not None]
 
-        # Vegyipari referencia árak
         for name, info in SPECIALTY_COMMODITIES.items():
             prices.append(PriceData(
-                name=name,
-                ticker=None,
-                price=info["ref_price"],
-                prev_close=info["ref_price"],
+                name=name, ticker=None,
+                price=info["eur_kg"],      # EUR/kg-ban tároljuk
+                prev_close=info["eur_kg"],
                 change_pct=0.0,
-                unit=info["unit"],
+                unit="EUR/kg",
                 emoji=info["emoji"],
                 category=info["category"],
                 timestamp=datetime.now(),
                 is_reference=True,
+                eur_kg=info["eur_kg"],
+                eur_range=info.get("eur_range", ""),
+                trend=info.get("trend", "stabil"),
+                outlook=info.get("outlook", ""),
+                buy_now=info.get("buy_now", False),
                 supplier_hint=info.get("supplier_hint", ""),
                 buy_strategy=info.get("buy_strategy", ""),
                 seasonal_trend=info.get("seasonal_trend", {}),
@@ -366,15 +390,7 @@ class PriceMonitor:
         for p in prices:
             if not p.is_reference:
                 self._previous_prices[p.name] = p.price
-
         return prices
-
-    def get_specialty_by_category(self, prices: list[PriceData]) -> dict:
-        by_cat: dict[str, list[PriceData]] = {}
-        for p in prices:
-            if p.is_reference:
-                by_cat.setdefault(p.category, []).append(p)
-        return by_cat
 
     def calculate_changes(self, prices: list[PriceData]) -> dict:
         up, down, stable = [], [], []
